@@ -1,1 +1,6 @@
-This is a test, the answer is 'monkey'
+
+
+
+
+
+terraform apply -var="admin_password=ChangeMe!123456"
