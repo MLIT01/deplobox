@@ -1,0 +1,88 @@
+trigger:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  # Name of your Service Connection in Azure DevOps
+  azureServiceConnection: 'sc-admin-deployment' 
+  
+  # Location of your terraform state storage
+  tfStateResourceGroup: 'mltest-tfstates-gnu-rg'
+  tfStateStorageAccount: 'mltestgnutfstate'
+
+stages:
+
+# Ensures RG and Gallery exist before Packer tries to push.
+
+- stage: Core_Infra
+  displayName: 'Deploy Core Infrastructure'
+  jobs:
+  - job: Terraform_Core
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Terraform Apply (Core)'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd core_infra
+          
+          # Init & Apply
+          terraform init
+          terraform apply -auto-approve
+
+
+
+# Builds the Windows Image and pushes it to the Gallery.
+
+- stage: Packer_Build
+  displayName: 'Build Image (Packer)'
+  dependsOn: Core_Infra
+  jobs:
+  - job: Build_Windows_Image
+    timeoutInMinutes: 120 # Windows builds take time!
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Packer Build'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd packer
+          
+          # Install Packer (Ubuntu agent doesn't always have the latest)
+          curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+          sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+          sudo apt-get update && sudo apt-get install packer
+
+          # Init
+          packer init .
+
+          # Build
+          # We pass 'use_azure_cli_auth=true' in the HCL, so it uses the context from this task
+          packer build -force admin-box.pkr.hcl
+
+
+# Deploys the actual VM
+
+- stage: Infra_Deploy
+  displayName: 'Deploy Admin Jumpbox'
+  dependsOn: Packer_Build
+  jobs:
+  - job: Terraform_Infra
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Terraform Apply (Infra)'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd infra
+          
+          terraform init
+          terraform apply -auto-approve

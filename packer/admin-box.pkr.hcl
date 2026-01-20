@@ -31,19 +31,15 @@ source "azure-arm" "windows" {
   # 1. Authentication (Uses your local az login)
   use_azure_cli_auth = true
 
-  # 2. Base Image (Windows Server 2025)
   os_type         = "Windows"
   image_publisher = "MicrosoftWindowsServer"
   image_offer     = "WindowsServer"
-  image_sku       = "2025-Datacenter" # Confirm this SKU in your region, or use 2022-Datacenter
+  image_sku       = "2025-Datacenter-g2" # Confirm this SKU in your region, or use 2022-Datacenter
+
   
-  # 3. VM Specs for the Builder
   vm_size         = "Standard_D2s_v3"
   location        = "UK South"
 
-  # 4. The "Magic" Connection Setup
-  # We inject the bootstrap script into the VM's "Custom Data" (Cloud-Init for Windows)
-  # This runs ONCE on first boot, enabling WinRM so Packer can connect.
   communicator    = "winrm"
   winrm_use_ssl   = true
   winrm_insecure  = true
@@ -84,7 +80,8 @@ build {
       "choco install powershell-core -y",
       "choco install vscode -y",          
       "choco install notepadplusplus -y",
-      "choco install firefox -y"
+      "choco install firefox -y",
+      "choco install sql-server-management-studio -y"
     ]
   }
 
@@ -104,21 +101,27 @@ build {
       "New-Item -Path 'C:\\Users\\Default\\.vscode\\extensions' -ItemType Directory -Force",
 
       # Copy extensions from current user to Default User
-      # This ensures any new user logging in gets these extensions automatically
       "Copy-Item -Path \"$env:USERPROFILE\\.vscode\\extensions\\*\" -Destination 'C:\\Users\\Default\\.vscode\\extensions' -Recurse -Force"
     ]
   }
 
-  # Step 3: Windows Update (Optional - This takes a LONG time)
+  # Windows Update (Optional - This takes a LONG time)
   # Ideally, use the 'community.windows-update' plugin, but for now we skip to keep it simple.
-
-  # Step 4: Generalize (Sysprep)
-  # CRITICAL: This prepares the Windows image to be cloned. 
-  # If you don't do this, the new VMs will all have the same ID and crash.
+  
+  # Sysprep
   provisioner "powershell" {
     inline = [
+      # Stop Windows Update Service to prevent Sysprep hangs
+      "Get-AppxPackage -Name *NotepadPlusPlus* | Remove-AppxPackage -ErrorAction SilentlyContinue",
+      "Write-Output 'Stopping Windows Services...'",
+      "Stop-Service -Name 'wuauserv','bits','cryptsvc','trustedinstaller' -Force -ErrorAction SilentlyContinue",
+      "Stop-Process -Name 'TiWorker','msiexec' -Force -ErrorAction SilentlyContinue",
+
+      # Run Sysprep
       "Write-Output 'Syprepping...'",
       "& $env:SystemRoot\\System32\\Sysprep\\Sysprep.exe /oobe /generalize /quiet /quit",
+
+      # Wait for Sysprep to finish
       "while($true) { $imageState = Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State | Select -ExpandProperty ImageState; if($imageState -eq 'IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE') { break } Start-Sleep -s 10 }"
     ]
   }

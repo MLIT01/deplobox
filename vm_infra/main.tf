@@ -65,11 +65,11 @@ resource "azurerm_network_interface" "nic_vm" {
   }
 }
 
-resource "azurerm_user_assigned_identity" "vm_identity" {
-  location            = azurerm_resource_group.rg.location
-  name                = "id-admin-jumpbox"
-  resource_group_name = azurerm_resource_group.rg.name
-}
+# resource "azurerm_user_assigned_identity" "vm_identity" {
+#   location            = azurerm_resource_group.rg.location
+#   name                = "id-admin-jumpbox"
+#   resource_group_name = azurerm_resource_group.rg.name
+# }
 
 resource "azurerm_windows_virtual_machine" "vm" {
   name                = "vm-admin-01"
@@ -77,7 +77,7 @@ resource "azurerm_windows_virtual_machine" "vm" {
   location            = azurerm_resource_group.rg.location
   size                = "Standard_D2s_v3"
   admin_username      = "adminuser"
-  admin_password      = var.admin_password
+  admin_password      = random_password.vm_password.result
   network_interface_ids = [
     azurerm_network_interface.nic_vm.id,
   ]
@@ -89,8 +89,51 @@ resource "azurerm_windows_virtual_machine" "vm" {
     storage_account_type = "StandardSSD_LRS"
   }
   
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.vm_identity.id]
+#   identity {
+#     type         = "UserAssigned"
+#     identity_ids = [azurerm_user_assigned_identity.vm_identity.id]
+#   }
+}
+
+resource "azurerm_network_security_group" "nsg_vm" {
+  name                = "nsg-jumpbox"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  security_rule {
+    name                       = "AllowBastionInbound"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "3389"
+    source_address_prefix      = "10.0.2.0/24" # Your Bastion Subnet
+    destination_address_prefix = "*"
   }
+
+  security_rule {
+    name                       = "DenyAllRDP"
+    priority                   = 200
+    direction                  = "Inbound"
+    access                     = "Deny"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "3389"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "nsg_assoc" {
+  subnet_id                 = azurerm_subnet.snet_vm.id
+  network_security_group_id = azurerm_network_security_group.nsg_vm.id
+}
+
+resource "azurerm_virtual_machine_extension" "aad_login" {
+  name                 = "AADLoginForWindows"
+  virtual_machine_id   = azurerm_windows_virtual_machine.vm.id
+  publisher            = "Microsoft.Azure.ActiveDirectory"
+  type                 = "AADLoginForWindows"
+  type_handler_version = "1.0"
 }

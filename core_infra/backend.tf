@@ -3,8 +3,8 @@ terraform {
   backend "azurerm" {
     resource_group_name  = "mltest-tfstates-gnu-rg"
     storage_account_name = "mltestgnutfstate"
-    container_name       = "tfstate-core"
-    key                  = "core.tfstate"
+    container_name       = "tfstate"
+    key                  = "packer-core.tfstate"
   }
 
   required_providers {
